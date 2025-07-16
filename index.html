@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Magnetic Dipole Field Simulation</title>
+    <style>
+      body {
+        margin: 0;
+        background-color: #f0f0f0;
+        font-family: Monospace;
+        font-size: 13px;
+        line-height: 24px;
+        overscroll-behavior: none;
+        text-rendering: optimizeLegibility;
+        user-select: none;
+        font-smooth: always;
+      }
+    </style>
+    <!-- Import map shim for browsers without native support -->
+    <script
+      async
+      src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"
+    ></script>
+    <!-- Define all external dependencies in the import map -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      // *** GLOBAL VARIABLES & DATA STRUCTURES ***
+      let scene, camera, renderer, controls, light;
+
+      // Dipole moment pointing in +Y direction
+      const dipoleMoment = new THREE.Vector3(0, 1, 0);
+
+      // *** Initialization ***
+      init();
+
+      function init() {
+        initScene();
+        initCamera();
+        initRenderer();
+        initControls();
+        drawObjects();
+      }
+
+      // *** Setup Scene ***
+      function initScene() {
+        // Set up the scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+      }
+
+      // *** Setup Camera ***
+      function initCamera() {
+        camera = new THREE.PerspectiveCamera(
+          60,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        // Set up camera position
+        camera.position.z = 2;
+      }
+
+      // *** Setup Renderer ***
+      function initRenderer() {
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Resize handler
+        window.addEventListener("resize", () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      }
+
+      // *** Setup Controls ***
+      function initControls() {
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.5;
+      }
+
+      // *** Draw Objects ***
+      function drawObjects() {
+        // Create lines starting around the dipole (bar magnet at origin)
+
+        // start points lie on a circle of this radius
+        const radius = 0.5;
+
+        // Loop around the circle in the X–Y plane
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+          // Also start lines at three Z‐levels: above, at, and below the dipole
+          for (let z = -1; z <= 1; z += 1) {
+            // Compute a point on the circle
+            const x = radius * Math.cos(angle);
+            const y = radius * Math.sin(angle);
+            const startPoint = new THREE.Vector3(x, y, z);
+
+            // Trace a field line following the dipole moment direction (red)
+            createFieldLine(startPoint, dipoleMoment);
+
+            // Then trace the “reverse” side of the dipole (blue)
+            createFieldLine(
+              startPoint,
+              dipoleMoment.clone().negate(),
+              150,
+              0.1,
+              0x0000ff
+            ); // reverse
+          }
+        }
+
+        // Add a cylinder to represent the bar magnet
+        const magnetGeometry = new THREE.CylinderGeometry(0.1, 0.1, 1, 32);
+        const magnetMaterial = new THREE.MeshBasicMaterial({ color: 0x808080 });
+        const magnet = new THREE.Mesh(magnetGeometry, magnetMaterial);
+        magnet.rotation.y = Math.PI / 2;
+        scene.add(magnet);
+      }
+
+      /**
+       * Magnetic dipole field function that calculates the magnetic field at a point
+       * @param {THREE.Vector3} point: position vector of the point where the field is calculated
+       * @param {THREE.Vector3} m: magnetic dipole moment vector
+       */
+      function calculateMagneticField(point, m) {
+        // r is the position vector from the dipole to the point
+        const r = point.clone();
+
+        // rMag is the magnitude of r
+        const rMag = r.length();
+
+        // rHat is the unit vector in the direction of r
+        const rHat = r.clone().normalize();
+
+        // "dot" is the dot product of the dipole moment and r unit vector
+        const dot = m.dot(rHat);
+
+        // B is the magnetic field vector
+        // (mu_0 / 4 * pi) is omitted for simplicity
+        const term1 = rHat.multiplyScalar(3 * dot);
+        return term1.sub(m).multiplyScalar(1 / Math.pow(rMag, 3));
+      }
+
+      /**
+       * Trace and render a magnetic field line starting from a given point.
+       *
+       * @param {THREE.Vector3} startPoint  - The point (in world coords) where this line begins.
+       * @param {THREE.Vector3} m           - The magnetic dipole moment vector (strength & orientation).
+       * @param {number} steps              - Maximum number of integration steps before giving up.
+       * @param {number} stepSize           - Distance to move along the field direction each step.
+       * @param {number} color              - Hex color of the line (e.g. 0xff0000 for red).
+       */
+      function createFieldLine(
+        startPoint,
+        m,
+        steps = 150,
+        stepSize = 0.1,
+        color = 0xff0000
+      ) {
+        const points = [];
+        // Clone so we don’t modify the original startPoint
+        let point = startPoint.clone();
+
+        // Integrate along the B-field
+        for (let i = 0; i < steps; i++) {
+          // record current position
+          points.push(point.clone());
+
+          // Calculate the dipole magnetic field at this point
+          const B = calculateMagneticField(point, m);
+
+          // If the field is too weak or too strong, stop to avoid runaway or noise
+          if (B.length() < 1e-3 || B.length() > 1e3) break;
+
+          // Step forward along the field direction by a fixed arc length
+          B.normalize().multiplyScalar(stepSize);
+          point = point.clone().add(B);
+        }
+
+        // Build a THREE line from the array of Vector3 points
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color: color });
+
+        // Add to the scene so it renders
+        scene.add(new THREE.Line(geometry, material));
+      }
+
+      // Animate
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      requestAnimationFrame(animate);
+    </script>
+  </body>
+</html>
